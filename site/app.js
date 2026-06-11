@@ -17,6 +17,7 @@
     deadlineSelect: document.getElementById("deadlineSelect"),
     sortSelect: document.getElementById("sortSelect"),
     visibleCount: document.getElementById("visibleCount"),
+    urgentCount: document.getElementById("urgentCount"),
     upcomingCount: document.getElementById("upcomingCount"),
     missingCount: document.getElementById("missingCount"),
     topDeadline: document.getElementById("topDeadline"),
@@ -68,8 +69,15 @@
     const now = new Date();
     const days = Math.floor((deadline.getTime() - now.getTime()) / 86400000);
     if (days < 0) return "overdue";
+    if (days < 10) return "urgent";
     if (days <= 30) return "soon";
     return "upcoming";
+  }
+
+  function daysUntil(value) {
+    const deadline = parseDeadline(value);
+    if (!deadline) return null;
+    return Math.floor((deadline.getTime() - new Date().getTime()) / 86400000);
   }
 
   function currentSheet() {
@@ -101,7 +109,7 @@
 
       if (query && !haystack.includes(query)) return false;
       if (rank && row[fields.rank] !== rank) return false;
-      if (deadlineFilter === "upcoming" && state !== "upcoming" && state !== "soon") return false;
+      if (deadlineFilter === "upcoming" && !["upcoming", "soon", "urgent"].includes(state)) return false;
       if (deadlineFilter === "missing" && state !== "missing") return false;
       if (deadlineFilter === "overdue" && state !== "overdue") return false;
       return true;
@@ -143,18 +151,37 @@
     els.tableBody.innerHTML = rows
       .map((row) => {
         const state = deadlineState(row[fields.next]);
+        const days = daysUntil(row[fields.next]);
         const url = row[fields.url] || "";
-        const urlHtml = url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Open</a>` : `<span class="muted">-</span>`;
+        const countdownText = countdown(row[fields.next]);
+        const stateLabel = {
+          urgent: "Urgent",
+          soon: "Soon",
+          upcoming: "Upcoming",
+          overdue: "Overdue",
+          missing: "Missing",
+        }[state];
+        const urgencyMeta = days === null ? "" : days < 0 ? "Past deadline" : `${days + 1} calendar days left`;
+        const urlHtml = url ? `<a class="open-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Open</a>` : `<span class="muted">-</span>`;
         return `
-          <tr>
+          <tr class="row-${state}">
             <td class="conf">${escapeHtml(row[fields.conference])}</td>
             <td>${escapeHtml(row[fields.acronym]) || `<span class="muted">-</span>`}</td>
-            <td><span class="pill">${escapeHtml(row[fields.rank]) || "-"}</span></td>
-            <td class="deadline ${state === "overdue" ? "overdue" : state === "soon" ? "soon" : ""}">${escapeHtml(row[fields.next]) || "-"}</td>
-            <td>${escapeHtml(countdown(row[fields.next])) || `<span class="muted">-</span>`}</td>
+            <td><span class="rank-pill rank-${escapeHtml(String(row[fields.rank] || "other").replace(/[^A-Za-z0-9]+/g, "-"))}">${escapeHtml(row[fields.rank]) || "-"}</span></td>
+            <td class="deadline-cell">
+              <span class="deadline ${state}">${escapeHtml(row[fields.next]) || "-"}</span>
+              <span class="deadline-state ${state}">${stateLabel}</span>
+            </td>
+            <td>
+              ${
+                countdownText
+                  ? `<span class="countdown ${state}">${escapeHtml(countdownText)}</span><span class="countdown-meta">${escapeHtml(urgencyMeta)}</span>`
+                  : `<span class="muted">-</span>`
+              }
+            </td>
             <td>${escapeHtml(row[fields.submission]) || `<span class="muted">-</span>`}</td>
             <td>${escapeHtml(row[fields.abstract]) || `<span class="muted">-</span>`}</td>
-            <td>${escapeHtml(row[fields.pages]) || `<span class="muted">-</span>`}</td>
+            <td>${row[fields.pages] ? `<span class="format-chip">${escapeHtml(row[fields.pages])}</span>` : `<span class="muted">-</span>`}</td>
             <td>${urlHtml}</td>
           </tr>
         `;
@@ -163,11 +190,13 @@
   }
 
   function renderStats(rows) {
-    const upcoming = rows.filter((row) => ["upcoming", "soon"].includes(deadlineState(row[fields.next]))).length;
+    const urgent = rows.filter((row) => deadlineState(row[fields.next]) === "urgent").length;
+    const upcoming = rows.filter((row) => ["upcoming", "soon", "urgent"].includes(deadlineState(row[fields.next]))).length;
     const missing = rows.filter((row) => deadlineState(row[fields.next]) === "missing").length;
     const nearest = rows.find((row) => parseDeadline(row[fields.next]));
 
     els.visibleCount.textContent = rows.length;
+    els.urgentCount.textContent = urgent;
     els.upcomingCount.textContent = upcoming;
     els.missingCount.textContent = missing;
     els.topDeadline.textContent = nearest ? nearest[fields.next] : "-";
