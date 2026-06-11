@@ -104,6 +104,42 @@ To build site data from a custom workbook:
 ./build_site_data.py deadline_4612.xlsx -o site/data.js
 ```
 
+### GitHub Pages Hosting
+
+The repository includes a GitHub Actions workflow at:
+
+```text
+.github/workflows/update-site.yml
+```
+
+In GitHub, enable Pages with:
+
+```text
+Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+```
+
+The workflow deploys the static files in `site/` to GitHub Pages.
+
+### Quarterly Auto-Refresh
+
+The same workflow runs every three months using this cron schedule:
+
+```text
+15 3 1 */3 *
+```
+
+On each scheduled run it:
+
+1. Downloads the latest `ICORE2026` export into `CORE.csv`.
+2. Rebuilds `CORE_by_area.xlsx`.
+3. Scrapes Researchr-style conference pages for area `4612`.
+4. Rebuilds `deadline.xlsx`.
+5. Regenerates `site/data.js`.
+6. Commits changed generated data back to `main`.
+7. Deploys the refreshed `site/` folder to GitHub Pages.
+
+You can also run it manually from the GitHub Actions tab with `workflow_dispatch`.
+
 ## 3. Create Area Sheets Only
 
 Run this first if `CORE_by_area.xlsx` does not exist or if `CORE.csv` changed:
