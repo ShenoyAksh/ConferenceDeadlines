@@ -184,6 +184,8 @@ The `Countdown` column is computed from `Next Deadline` against the current loca
 
 The `Page Limit / Format` column captures author-instruction hints when available, such as `19 pages`, `8-12 pages`, `LNCS format`, `ACM format`, or `IEEE format`.
 
+For software-engineering conferences, the scraper tries Researchr first using URLs like `https://conf.researchr.org/home/fse-2027` and `https://conf.researchr.org/dates/fse-2027`, then follows same-site important-date/submission/author links before falling back to general web search.
+
 ### Deadline Scraper Options
 
 ```bash
@@ -200,6 +202,7 @@ The `Page Limit / Format` column captures author-instruction hints when availabl
 | `--years` | `2027 2026` | Conference years to try, in order. Earlier values are preferred. |
 | `--limit` | `0` | Maximum number of rows to process. `0` means all matching rows. |
 | `--start-row` | `2` | First worksheet row to process. Row 1 is the header. |
+| `--only-acronym` | empty | Process only one acronym, such as `FSE`, for debugging or rerunning one conference. |
 | `--overwrite` | off | Replace existing URL/deadline values. Without this, existing filled values are kept. |
 | `--dry-run` | off | Run without writing the output workbook. |
 | `--no-sort` | off | Keep the original sheet order instead of sorting by upcoming deadline. |
@@ -281,6 +284,12 @@ Overwrite existing deadline columns:
 ./scrape_core_area_deadlines.py 4612 --overwrite
 ```
 
+Rerun just one conference acronym:
+
+```bash
+./scrape_core_area_deadlines.py 4612 --only-acronym FSE --overwrite --verbose
+```
+
 Disable the HTTP cache:
 
 ```bash
@@ -303,6 +312,7 @@ Keep the original CORE ranking order instead of sorting by deadline:
 
 - The scraper relies on live search results and conference websites, so not every row will produce a URL or deadline.
 - Deadline formats vary a lot across websites. The script looks for abstract and paper/submission deadline language near 2027 or 2026 dates.
+- Before searching, parenthesized notes in CORE conference names are removed, so entries like `was ESEC/FSE` do not pollute the search query.
 - Page limits and format instructions also vary; the script looks for page-count and template/format language on the same pages it fetches for deadlines.
 - After scraping, the output is sorted by `Next Deadline` unless `--no-sort` is used.
 - `deadline.xlsx` is regenerated from the input workbook each run. Use a custom `-o` name if you want to keep several versions.

@@ -18,6 +18,7 @@ The output sheet is sorted by upcoming deadline unless --no-sort is used.
 from __future__ import annotations
 
 import argparse
+import base64
 import html
 import json
 import re
@@ -125,11 +126,18 @@ BLOCK_TAGS = {
 SKIP_TAGS = {"script", "style", "noscript", "svg", "canvas"}
 
 SEARCH_HOSTS = {
+    "bing.com",
     "duckduckgo.com",
+    "www.bing.com",
     "www.duckduckgo.com",
     "lite.duckduckgo.com",
     "html.duckduckgo.com",
 }
+
+SEARCH_ENDPOINTS = (
+    "https://lite.duckduckgo.com/lite/",
+    "https://www.bing.com/search",
+)
 
 SKIP_HOST_FRAGMENTS = (
     "facebook.com",
@@ -145,6 +153,7 @@ SKIP_HOST_FRAGMENTS = (
     "portal.core.edu.au",
     "core.edu.au",
     "getpaperpilot.com",
+    "myhuiban.com",
     "wikipedia.org",
 )
 
@@ -154,6 +163,17 @@ LOW_PRIORITY_HOST_FRAGMENTS = (
     "easychair.org",
     "openreview.net",
     "edas.info",
+)
+
+HIGH_PRIORITY_HOST_FRAGMENTS = (
+    "conf.researchr.org",
+    "acm.org",
+    "ieee.org",
+    "computer.org",
+    "usenix.org",
+    "sigplan.org",
+    "sigsoft.org",
+    "springer.com",
 )
 
 SKIP_PATH_SUFFIXES = (
@@ -481,8 +501,15 @@ def clean_space(value: object) -> str:
 
 
 def simplify_conference_name(name: str) -> str:
+    name = re.sub(r"\([^)]*\)", "", name)
     name = re.sub(r";.*$", "", name)
-    name = re.sub(r"\([^)]*(?:was|changed|duplicate|removed)[^)]*\)", "", name, flags=re.I)
+    return clean_space(name)
+
+
+def compact_conference_name(name: str) -> str:
+    name = simplify_conference_name(name)
+    name = re.sub(r"\b(?:ACM|IEEE|USENIX|IFIP|SIAM|AAAI)/?", "", name, flags=re.I)
+    name = re.sub(r"\b(?:International|ACM-SIGACT|ACM-SIGPLAN)\b", "", name, flags=re.I)
     return clean_space(name)
 
 
@@ -521,7 +548,15 @@ def unwrap_search_url(url: str) -> str:
         params = parse.parse_qs(parsed.query)
         for key in ("uddg", "u", "url"):
             if key in params and params[key]:
-                return params[key][0]
+                candidate = params[key][0]
+                if candidate.startswith("a1"):
+                    try:
+                        decoded = base64.urlsafe_b64decode(candidate[2:] + "==").decode("utf-8")
+                        if decoded.startswith(("http://", "https://")):
+                            return decoded
+                    except (ValueError, UnicodeDecodeError):
+                        pass
+                return candidate
 
     return url
 
@@ -584,7 +619,11 @@ def page_matches_conference(text: str, url: str, name: str, acronym: str) -> boo
         return True
 
     token_hits = sum(1 for token in meaningful_name_tokens(name) if token_in_text(token, haystack))
-    return token_hits >= 2
+    if token_hits >= 2:
+        return True
+
+    host = parse.urlsplit(url).netloc.lower()
+    return host_matches(host, HIGH_PRIORITY_HOST_FRAGMENTS) and token_hits >= 1
 
 
 def search_score(url: str, title: str, name: str, acronym: str, year: str) -> int:
@@ -603,6 +642,10 @@ def search_score(url: str, title: str, name: str, acronym: str, year: str) -> in
 
     if any(term in haystack for term in RELEVANT_LINK_TERMS):
         score += 20
+    if any(term in haystack for term in ("official", "home", "homepage", "dates", "important-dates", "cfp", "call-for-papers")):
+        score += 15
+    if host_matches(host, HIGH_PRIORITY_HOST_FRAGMENTS):
+        score += 25
     if host_matches(host, LOW_PRIORITY_HOST_FRAGMENTS):
         score -= 20
 
@@ -611,22 +654,27 @@ def search_score(url: str, title: str, name: str, acronym: str, year: str) -> in
 
 def build_queries(name: str, acronym: str, year: str, max_queries: int) -> list[str]:
     simple_name = simplify_conference_name(name)
+    compact_name = compact_conference_name(name)
     queries = []
 
     if acronym:
         queries.extend(
             [
-                f'"{acronym} {year}" "submission deadline"',
-                f'"{acronym}" "{year}" "important dates"',
-                f'"{acronym}" "{year}" "call for papers"',
+                f'"{acronym}" "{simple_name}" "{year}" official website',
+                f'"{acronym}" "{compact_name}" "{year}" "important dates"',
+                f'"{acronym}" "{compact_name}" "{year}" "submission deadline"',
+                f'"{acronym}" "{compact_name}" "{year}" "call for papers"',
+                f'"{acronym} {year}" "{compact_name}"',
             ]
         )
 
     queries.extend(
         [
+            f'"{simple_name}" "{year}" official website',
             f'"{simple_name}" "{year}" "submission deadline"',
             f'"{simple_name}" "{year}" "abstract submission"',
             f'"{simple_name}" "{year}" "important dates"',
+            f'"{compact_name}" "{year}" "call for papers"',
         ]
     )
 
@@ -639,6 +687,24 @@ def build_queries(name: str, acronym: str, year: str, max_queries: int) -> list[
     return deduped[:max_queries]
 
 
+def researchr_slug(acronym: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", acronym.casefold()).strip("-")
+    return slug
+
+
+def researchr_hits(acronym: str, year: str) -> list[SearchHit]:
+    slug = researchr_slug(acronym)
+    if not slug:
+        return []
+
+    base = f"{slug}-{year}"
+    urls = [
+        f"https://conf.researchr.org/home/{base}",
+        f"https://conf.researchr.org/dates/{base}",
+    ]
+    return [SearchHit(url, f"{acronym} {year} Researchr", 120) for url in urls]
+
+
 def search_web(
     client: HttpClient,
     query: str,
@@ -647,35 +713,37 @@ def search_web(
     year: str,
     max_results: int,
 ) -> list[SearchHit]:
-    search_url = "https://lite.duckduckgo.com/lite/?" + parse.urlencode({"q": query})
-    html_text = client.fetch(search_url)
-    if not html_text:
-        return []
-
-    _, links = parse_html(html_text, search_url)
     hits: list[SearchHit] = []
     seen_urls: set[str] = set()
 
-    for link in links:
-        unwrapped = canonical_url(unwrap_search_url(link.url))
-        if should_skip_url(unwrapped) or unwrapped in seen_urls:
-            continue
-        if not hit_matches_conference(unwrapped, link.text, name, acronym):
-            continue
-
-        score = search_score(unwrapped, link.text, name, acronym, year)
-        if score < 0:
+    for endpoint in SEARCH_ENDPOINTS:
+        search_url = endpoint + "?" + parse.urlencode({"q": query})
+        html_text = client.fetch(search_url)
+        if not html_text:
             continue
 
-        hits.append(SearchHit(unwrapped, link.text, score))
-        seen_urls.add(unwrapped)
+        _, links = parse_html(html_text, search_url)
+        for link in links:
+            unwrapped = canonical_url(unwrap_search_url(link.url))
+            if should_skip_url(unwrapped) or unwrapped in seen_urls:
+                continue
+            if not hit_matches_conference(unwrapped, link.text, name, acronym):
+                continue
+
+            score = search_score(unwrapped, link.text, name, acronym, year)
+            if score < 0:
+                continue
+
+            hits.append(SearchHit(unwrapped, link.text, score))
+            seen_urls.add(unwrapped)
 
     hits.sort(key=lambda hit: hit.score, reverse=True)
     return hits[:max_results]
 
 
-def relevant_child_links(page_url: str, links: list[Link], year: str, limit: int) -> list[str]:
+def relevant_child_links(page_url: str, links: list[Link], acronym: str, year: str, limit: int) -> list[str]:
     base_host = parse.urlsplit(page_url).netloc.lower()
+    target_researchr_marker = f"/{researchr_slug(acronym)}-{year}"
     scored: list[tuple[int, str]] = []
     seen: set[str] = {canonical_url(page_url)}
 
@@ -683,6 +751,8 @@ def relevant_child_links(page_url: str, links: list[Link], year: str, limit: int
         url = canonical_url(link.url)
         parsed = parse.urlsplit(url)
         if should_skip_url(url) or parsed.netloc.lower() != base_host or url in seen:
+            continue
+        if "conf.researchr.org" in base_host and target_researchr_marker not in url.casefold():
             continue
 
         haystack = f"{url} {link.text}".casefold()
@@ -692,6 +762,9 @@ def relevant_child_links(page_url: str, links: list[Link], year: str, limit: int
         for term in RELEVANT_LINK_TERMS:
             if term in haystack:
                 score += 12
+
+        if "conf.researchr.org" in base_host and f"-{year}" in haystack:
+            score += 10
 
         if score:
             scored.append((score, url))
@@ -914,9 +987,14 @@ def page_info_contexts(text: str) -> Iterable[str]:
 
 def normalize_page_phrase(match: re.Match[str]) -> str:
     phrase = clean_space(match.group(0))
+    phrase = re.sub(r"\s+(?:including|excluding|for|plus)$", "", phrase, flags=re.I)
+    phrase = phrase.lower()
     pages = match.groupdict().get("pages")
-    if pages and phrase == pages:
-        return f"{pages} pages"
+    if pages:
+        normalized_pages = str(int(pages))
+        if phrase == pages:
+            return f"{normalized_pages} pages"
+        phrase = re.sub(rf"\b0*{int(pages)}\s+page\b", f"{normalized_pages} pages", phrase)
     return phrase
 
 
@@ -1060,7 +1138,7 @@ def inspect_hit(
             return EnrichmentResult(score=-1)
         all_candidates.extend(extract_deadline_candidates(text, hit.url, years))
         all_page_info_candidates.extend(extract_page_info_candidates(text, hit.url))
-        pages.extend(relevant_child_links(hit.url, links, year, child_link_limit))
+        pages.extend(relevant_child_links(hit.url, links, acronym, year, child_link_limit))
 
     for page_url in pages[1:]:
         page_html = client.fetch(page_url)
@@ -1115,6 +1193,9 @@ def enrich_conference(
 
     for year in years:
         hits_by_url: dict[str, SearchHit] = {}
+        for hit in researchr_hits(acronym, year):
+            hits_by_url[hit.url] = hit
+
         for query in build_queries(name, acronym, year, queries_per_year):
             if verbose:
                 print(f"    search {query}")
@@ -1366,6 +1447,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--limit", type=int, default=0, help="limit rows processed, default: all")
     parser.add_argument("--start-row", type=int, default=2, help="first worksheet row to process")
+    parser.add_argument(
+        "--only-acronym",
+        default="",
+        help="process only rows whose acronym matches this value, useful for debugging one conference",
+    )
     parser.add_argument("--overwrite", action="store_true", help="replace existing URL/deadline values")
     parser.add_argument("--dry-run", action="store_true", help="do not write the output workbook")
     parser.add_argument(
@@ -1489,6 +1575,8 @@ def main() -> int:
             name = clean_space(sheet.cell(row=row, column=conference_col).value)
             acronym = clean_space(sheet.cell(row=row, column=acronym_col).value)
             if not name:
+                continue
+            if args.only_acronym and acronym.casefold() != args.only_acronym.casefold():
                 continue
 
             rank = clean_space(sheet.cell(row=row, column=rank_col).value)
