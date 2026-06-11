@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 from urllib import error, parse, request
 
@@ -29,6 +31,19 @@ USER_AGENT = (
 )
 
 
+def default_area() -> str:
+    return os.environ.get("CORE_AREA", "4612")
+
+
+def default_source() -> str:
+    return os.environ.get("CORE_SOURCE", "ICORE2026")
+
+
+def default_years() -> list[str]:
+    current_year = date.today().year
+    return [str(current_year + 1), str(current_year)]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Download CORE.csv from the CORE portal and run the full area/deadline pipeline."
@@ -36,13 +51,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "area",
         nargs="?",
-        default="4612",
-        help="area code to enrich with deadlines, default: 4612",
+        default=default_area(),
+        help="area code to enrich with deadlines, default: CORE_AREA or 4612",
     )
     parser.add_argument(
         "--source",
-        default="ICORE2026",
-        help="CORE/ICORE source to export, default: ICORE2026",
+        default=default_source(),
+        help="CORE/ICORE source to export, default: CORE_SOURCE or ICORE2026",
     )
     parser.add_argument(
         "--portal-url",
@@ -100,8 +115,55 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--years",
         nargs="+",
-        default=["2027", "2026"],
-        help="deadline years to try in order, default: 2027 2026",
+        default=None,
+        help="deadline years to try in order, default: next year then current year",
+    )
+    parser.add_argument(
+        "--scrape-timeout",
+        type=int,
+        default=15,
+        help="deadline scraper HTTP timeout in seconds, default: 15",
+    )
+    parser.add_argument(
+        "--scrape-delay",
+        type=float,
+        default=0.75,
+        help="deadline scraper delay between requests, default: 0.75",
+    )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=2_000_000,
+        help="maximum bytes read per scraped page, default: 2000000",
+    )
+    parser.add_argument(
+        "--queries-per-year",
+        type=int,
+        default=4,
+        help="search queries per conference/year for deadline scraping, default: 4",
+    )
+    parser.add_argument(
+        "--max-search-results",
+        type=int,
+        default=6,
+        help="search results kept from each query, default: 6",
+    )
+    parser.add_argument(
+        "--pages-per-year",
+        type=int,
+        default=6,
+        help="top search-result pages inspected per conference/year, default: 6",
+    )
+    parser.add_argument(
+        "--child-links",
+        type=int,
+        default=3,
+        help="same-site CFP/deadline links followed from each result page, default: 3",
+    )
+    parser.add_argument(
+        "--scrape-cache",
+        default=".core_deadline_scrape_cache.json",
+        help='deadline scraper HTTP cache path, default: .core_deadline_scrape_cache.json. Use "" to disable.',
     )
     parser.add_argument(
         "--deadline-limit",
@@ -253,6 +315,7 @@ def create_area_workbook(args: argparse.Namespace) -> None:
 
 
 def scrape_deadlines(args: argparse.Namespace) -> None:
+    years = [str(year) for year in (args.years or default_years())]
     command = [
         sys.executable,
         "scrape_core_area_deadlines.py",
@@ -264,9 +327,25 @@ def scrape_deadlines(args: argparse.Namespace) -> None:
         "--include-ranks",
         *args.include_ranks,
         "--years",
-        *args.years,
+        *years,
         "--start-row",
         str(args.deadline_start_row),
+        "--timeout",
+        str(args.scrape_timeout),
+        "--delay",
+        str(args.scrape_delay),
+        "--max-bytes",
+        str(args.max_bytes),
+        "--queries-per-year",
+        str(args.queries_per_year),
+        "--max-search-results",
+        str(args.max_search_results),
+        "--pages-per-year",
+        str(args.pages_per_year),
+        "--child-links",
+        str(args.child_links),
+        "--cache",
+        args.scrape_cache,
     ]
 
     if args.deadline_limit:

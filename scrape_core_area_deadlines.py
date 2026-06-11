@@ -7,9 +7,10 @@ for each conference, and writes a new workbook with these columns appended:
     URL, Abstract Deadline, Submission Deadline, Next Deadline, Countdown,
     Page Limit / Format
 
-By default it looks for 2027 deadlines first, then falls back to 2026. The URL
-written to the workbook is the page where the best deadline evidence was found,
-or the best matching conference page when no deadline text could be extracted.
+By default it looks for next year's deadlines first, then falls back to the
+current year. The URL written to the workbook is the page where the best
+deadline evidence was found, or the best matching conference page when no
+deadline text could be extracted.
 
 CORE C rows are skipped by default; the default included ranks are A*, A, and B.
 The output sheet is sorted by upcoming deadline unless --no-sort is used.
@@ -21,6 +22,7 @@ import argparse
 import base64
 import html
 import json
+import os
 import re
 import sys
 import time
@@ -1406,6 +1408,15 @@ def rank_is_included(rank: str, include_ranks: list[str]) -> bool:
     return aliases.get(normalized_rank) in normalized_includes
 
 
+def default_years() -> list[str]:
+    current_year = date.today().year
+    return [str(current_year + 1), str(current_year)]
+
+
+def default_area() -> str:
+    return os.environ.get("CORE_AREA", "4612")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Scrape one CORE area sheet for conference URLs and submission deadlines."
@@ -1413,8 +1424,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "area",
         nargs="?",
-        default="4612",
-        help="area code / worksheet to enrich, default: 4612",
+        default=default_area(),
+        help="area code / worksheet to enrich, default: CORE_AREA or 4612",
     )
     parser.add_argument(
         "-i",
@@ -1442,8 +1453,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--years",
         nargs="+",
-        default=["2027", "2026"],
-        help="conference years to try in order, default: 2027 2026",
+        default=None,
+        help="conference years to try in order, default: next year then current year",
     )
     parser.add_argument("--limit", type=int, default=0, help="limit rows processed, default: all")
     parser.add_argument("--start-row", type=int, default=2, help="first worksheet row to process")
@@ -1500,7 +1511,7 @@ def main() -> int:
     input_path = Path(args.input)
     output_path = Path(args.output)
     cache_path = Path(args.cache) if args.cache else None
-    years = [str(year) for year in args.years]
+    years = [str(year) for year in (args.years or default_years())]
     target_sheet = args.sheet or args.area
 
     workbook = load_workbook(input_path)

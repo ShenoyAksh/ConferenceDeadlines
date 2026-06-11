@@ -1,20 +1,21 @@
 # CORE Area Sheets and Deadline Scraper
 
-This folder contains two scripts:
+This folder contains the scripts and static site for a CORE conference deadline tracker:
 
 - `run_core_pipeline.py`: downloads the CORE/ICORE export from the portal, creates area sheets, then scrapes deadlines for one area.
 - `create_core_area_sheets.py`: reads `CORE.csv` and creates one Excel sheet per CORE area code.
 - `scrape_core_area_deadlines.py`: reads one area sheet, searches the web for upcoming conference pages, adds URL/deadline/page-format columns, and sorts by upcoming deadline.
 - `build_site_data.py`: converts `deadline.xlsx` into `site/data.js` for the static website.
+- `build_site_config.py`: writes runtime UI settings such as countdown thresholds into `site/config.js`.
 
-The deadline scraper prefers 2027 conference pages and falls back to 2026 when 2027 is not available. It skips CORE `C` rows by default. The output sheet is reordered by upcoming deadlines, with conferences that have the nearest future deadline at the top.
+When `--years` is not supplied, the deadline scraper tries next year first, then the current year based on the day you run it. It skips CORE `C` rows by default. The output sheet is reordered by upcoming deadlines, with conferences that have the nearest future deadline at the top.
 
 ## Requirements
 
 Use Python 3 with `openpyxl` installed:
 
 ```bash
-python3 -m pip install openpyxl
+python3 -m pip install -r requirements.txt
 ```
 
 The scraper uses only Python standard-library networking/HTML parsing plus `openpyxl`.
@@ -49,8 +50,8 @@ deadline.xlsx
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `area` | `4612` | Area code to enrich with deadlines. |
-| `--source` | `ICORE2026` | CORE/ICORE source to export. |
+| `area` | `CORE_AREA` or `4612` | Area code to enrich with deadlines. |
+| `--source` | `CORE_SOURCE` or `ICORE2026` | CORE/ICORE source to export. |
 | `--portal-url` | `https://portal.core.edu.au/conf-ranks/` | CORE portal export form URL. |
 | `--core-csv` | `CORE.csv` | Downloaded CORE CSV path. |
 | `--area-workbook` | `CORE_by_area.xlsx` | Area workbook path. |
@@ -61,7 +62,15 @@ deadline.xlsx
 | `--page` | `1` | Portal page parameter used with the export form. |
 | `--area-start-column` | `7` | 1-based CSV column where area codes start. |
 | `--include-ranks` | `A* A B` | CORE ranks to scrape for deadlines. Use `ALL` for every row. |
-| `--years` | `2027 2026` | Deadline years to try, in order. |
+| `--years` | next year, current year | Deadline years to try, in order. |
+| `--scrape-timeout` | `15` | Deadline scraper HTTP timeout in seconds. |
+| `--scrape-delay` | `0.75` | Delay between deadline scraper HTTP requests. |
+| `--max-bytes` | `2000000` | Maximum bytes read per scraped page. |
+| `--queries-per-year` | `4` | Search queries per conference/year for deadline scraping. |
+| `--max-search-results` | `6` | Search results kept from each query. |
+| `--pages-per-year` | `6` | Top search-result pages inspected per conference/year. |
+| `--child-links` | `3` | Same-site CFP/deadline links followed from each result page. |
+| `--scrape-cache` | `.core_deadline_scrape_cache.json` | Deadline scraper HTTP cache path. Use `""` to disable. |
 | `--deadline-limit` | `0` | Limit deadline rows processed. `0` means all matching rows. |
 | `--deadline-start-row` | `2` | First row for deadline scraping. |
 | `--deadline-overwrite` | off | Replace existing scraped values. |
@@ -80,6 +89,7 @@ Examples:
 ./run_core_pipeline.py 4602 --deadline-workbook deadline_4602.xlsx
 ./run_core_pipeline.py 4612 --deadline-limit 10 --verbose
 ./run_core_pipeline.py 4612 --skip-download --skip-area-sheets
+CORE_AREA=4602 CORE_SOURCE=ICORE2026 ./run_core_pipeline.py
 ```
 
 ## 2. Build and View the Website
@@ -88,6 +98,7 @@ After `deadline.xlsx` is generated, build the website data:
 
 ```bash
 ./build_site_data.py deadline.xlsx
+./build_site_config.py --urgent-days 10 --soon-days 30
 ```
 
 Then open:
@@ -97,11 +108,18 @@ site/index.html
 ```
 
 The website is static and reads `site/data.js`, so it can be opened directly from disk or hosted with GitHub Pages. It includes area selection, search, rank filtering, deadline filtering, sorting, countdowns, URL links, and page-limit/format details.
+It also reads `site/config.js` for UI thresholds such as when a deadline becomes urgent.
 
 To build site data from a custom workbook:
 
 ```bash
 ./build_site_data.py deadline_4612.xlsx -o site/data.js
+```
+
+To change countdown highlighting without editing the UI:
+
+```bash
+./build_site_config.py --urgent-days 7 --soon-days 21
 ```
 
 ### GitHub Pages Hosting
@@ -130,15 +148,31 @@ The same workflow runs every three months using this cron schedule:
 
 On each scheduled run it:
 
-1. Downloads the latest `ICORE2026` export into `CORE.csv`.
+1. Downloads the configured CORE/ICORE export into `CORE.csv`.
 2. Rebuilds `CORE_by_area.xlsx`.
-3. Scrapes Researchr-style conference pages for area `4612`.
+3. Scrapes Researchr-style conference pages for the configured area.
 4. Rebuilds `deadline.xlsx`.
-5. Regenerates `site/data.js`.
+5. Regenerates `site/data.js` and `site/config.js`.
 6. Commits changed generated data back to `main`.
 7. Deploys the refreshed `site/` folder to GitHub Pages.
 
-You can also run it manually from the GitHub Actions tab with `workflow_dispatch`.
+You can also run it manually from the GitHub Actions tab with `workflow_dispatch`. Manual inputs override repository variables for that run.
+
+### Workflow Configuration
+
+Set these as GitHub Actions manual inputs or repository variables when you want the scheduled job to use different values:
+
+| Variable / input | Default | Description |
+| --- | --- | --- |
+| `CORE_AREA` / `area` | `4612` | Area sheet to publish. |
+| `CORE_SOURCE` / `source` | `ICORE2026` | CORE/ICORE export source. |
+| `CORE_INCLUDE_RANKS` / `include_ranks` | `A*,A,B` | Comma-separated ranks to scrape. Use `ALL` for every row. |
+| `CORE_SCRAPE_YEARS` / `years` | empty | Space-separated years. Empty means next year then current year. |
+| `CORE_QUERIES_PER_YEAR` / `queries_per_year` | `0` | Search queries per conference/year in CI. |
+| `CORE_PAGES_PER_YEAR` / `pages_per_year` | `4` | Search-result pages inspected per conference/year in CI. |
+| `CORE_CHILD_LINKS` / `child_links` | `8` | Same-site CFP/deadline links followed in CI. |
+| `CORE_URGENT_DAYS` / `urgent_days` | `10` | Number of days below which countdowns are highlighted as urgent. |
+| `CORE_SOON_DAYS` / `soon_days` | `30` | Number of days below which countdowns are marked as soon. |
 
 ## 3. Create Area Sheets Only
 
@@ -230,12 +264,12 @@ For software-engineering conferences, the scraper tries Researchr first using UR
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `area` | `4612` | Area code / worksheet name to enrich. |
+| `area` | `CORE_AREA` or `4612` | Area code / worksheet name to enrich. |
 | `-i`, `--input` | `CORE_by_area.xlsx` | Input workbook containing area sheets. |
 | `-o`, `--output` | `deadline.xlsx` | Output workbook. |
 | `--sheet` | empty | Worksheet to enrich. Overrides the positional `area`. |
 | `--include-ranks` | `A* A B` | CORE ranks to scrape. Use `ALL` to scrape every row. |
-| `--years` | `2027 2026` | Conference years to try, in order. Earlier values are preferred. |
+| `--years` | next year, current year | Conference years to try, in order. Earlier values are preferred. |
 | `--limit` | `0` | Maximum number of rows to process. `0` means all matching rows. |
 | `--start-row` | `2` | First worksheet row to process. Row 1 is the header. |
 | `--only-acronym` | empty | Process only one acronym, such as `FSE`, for debugging or rerunning one conference. |
@@ -347,7 +381,7 @@ Keep the original CORE ranking order instead of sorting by deadline:
 ## Notes
 
 - The scraper relies on live search results and conference websites, so not every row will produce a URL or deadline.
-- Deadline formats vary a lot across websites. The script looks for abstract and paper/submission deadline language near 2027 or 2026 dates.
+- Deadline formats vary a lot across websites. The script looks for abstract and paper/submission deadline language near the configured years.
 - Before searching, parenthesized notes in CORE conference names are removed, so entries like `was ESEC/FSE` do not pollute the search query.
 - Page limits and format instructions also vary; the script looks for page-count and template/format language on the same pages it fetches for deadlines.
 - After scraping, the output is sorted by `Next Deadline` unless `--no-sort` is used.

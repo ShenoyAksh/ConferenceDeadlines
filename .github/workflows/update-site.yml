@@ -2,6 +2,34 @@ name: Update and Deploy Site
 
 on:
   workflow_dispatch:
+    inputs:
+      area:
+        description: "CORE area sheet to publish, for example 4612"
+        required: false
+      source:
+        description: "CORE/ICORE source to export, for example ICORE2026"
+        required: false
+      include_ranks:
+        description: "Comma-separated ranks to scrape, for example A*,A,B or ALL"
+        required: false
+      years:
+        description: "Space-separated conference years. Leave blank for next year then current year."
+        required: false
+      queries_per_year:
+        description: "Search queries per conference/year. Use 0 for Researchr-first only."
+        required: false
+      pages_per_year:
+        description: "Top search-result pages inspected per conference/year."
+        required: false
+      child_links:
+        description: "Same-site CFP/deadline links followed from each result page."
+        required: false
+      urgent_days:
+        description: "Urgent countdown threshold in days."
+        required: false
+      soon_days:
+        description: "Soon countdown threshold in days."
+        required: false
   schedule:
     # Run every three months on the first day of the month at 03:15 UTC.
     - cron: "15 3 1 */3 *"
@@ -10,6 +38,8 @@ on:
       - main
     paths:
       - "site/**"
+      - "*.py"
+      - "requirements.txt"
       - ".github/workflows/update-site.yml"
 
 permissions:
@@ -39,32 +69,91 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Resolve refresh configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          area="${{ github.event.inputs.area || '' }}"
+          source="${{ github.event.inputs.source || '' }}"
+          include_ranks="${{ github.event.inputs.include_ranks || '' }}"
+          scrape_years="${{ github.event.inputs.years || '' }}"
+          queries_per_year="${{ github.event.inputs.queries_per_year || '' }}"
+          pages_per_year="${{ github.event.inputs.pages_per_year || '' }}"
+          child_links="${{ github.event.inputs.child_links || '' }}"
+          urgent_days="${{ github.event.inputs.urgent_days || '' }}"
+          soon_days="${{ github.event.inputs.soon_days || '' }}"
+
+          area="${area:-${{ vars.CORE_AREA || '4612' }}}"
+          source="${source:-${{ vars.CORE_SOURCE || 'ICORE2026' }}}"
+          include_ranks="${include_ranks:-${{ vars.CORE_INCLUDE_RANKS || 'A*,A,B' }}}"
+          scrape_years="${scrape_years:-${{ vars.CORE_SCRAPE_YEARS || '' }}}"
+          queries_per_year="${queries_per_year:-${{ vars.CORE_QUERIES_PER_YEAR || '0' }}}"
+          pages_per_year="${pages_per_year:-${{ vars.CORE_PAGES_PER_YEAR || '4' }}}"
+          child_links="${child_links:-${{ vars.CORE_CHILD_LINKS || '8' }}}"
+          urgent_days="${urgent_days:-${{ vars.CORE_URGENT_DAYS || '10' }}}"
+          soon_days="${soon_days:-${{ vars.CORE_SOON_DAYS || '30' }}}"
+
+          {
+            echo "CORE_AREA=$area"
+            echo "CORE_SOURCE=$source"
+            echo "INCLUDE_RANKS=$include_ranks"
+            echo "SCRAPE_YEARS=$scrape_years"
+            echo "QUERIES_PER_YEAR=$queries_per_year"
+            echo "PAGES_PER_YEAR=$pages_per_year"
+            echo "CHILD_LINKS=$child_links"
+            echo "URGENT_DAYS=$urgent_days"
+            echo "SOON_DAYS=$soon_days"
+          } >> "$GITHUB_ENV"
+
       - name: Download CORE export and create area sheets
-        run: python run_core_pipeline.py 4612 --skip-deadlines --timeout 60
+        run: python run_core_pipeline.py "$CORE_AREA" --source "$CORE_SOURCE" --skip-deadlines --timeout 60
 
       - name: Scrape Researchr deadlines
-        run: >
-          python scrape_core_area_deadlines.py 4612
-          -i CORE_by_area.xlsx
-          -o deadline.xlsx
-          --overwrite
-          --include-ranks "A*" A B
-          --years 2027 2026
-          --queries-per-year 0
-          --pages-per-year 4
-          --child-links 8
-          --timeout 12
-          --delay 0.05
-          --cache ""
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IFS=',' read -r -a raw_ranks <<< "$INCLUDE_RANKS"
+          rank_args=()
+          for rank in "${raw_ranks[@]}"; do
+            rank="${rank#"${rank%%[![:space:]]*}"}"
+            rank="${rank%"${rank##*[![:space:]]}"}"
+            if [ -n "$rank" ]; then
+              rank_args+=("$rank")
+            fi
+          done
+
+          year_args=()
+          if [ -n "$SCRAPE_YEARS" ]; then
+            read -r -a raw_years <<< "$SCRAPE_YEARS"
+            year_args=(--years "${raw_years[@]}")
+          fi
+
+          python scrape_core_area_deadlines.py "$CORE_AREA" \
+            -i CORE_by_area.xlsx \
+            -o deadline.xlsx \
+            --overwrite \
+            --include-ranks "${rank_args[@]}" \
+            "${year_args[@]}" \
+            --queries-per-year "$QUERIES_PER_YEAR" \
+            --pages-per-year "$PAGES_PER_YEAR" \
+            --child-links "$CHILD_LINKS" \
+            --timeout 12 \
+            --delay 0.05 \
+            --cache ""
 
       - name: Build website data
         run: python build_site_data.py deadline.xlsx
+
+      - name: Build website config
+        run: python build_site_config.py --urgent-days "$URGENT_DAYS" --soon-days "$SOON_DAYS"
 
       - name: Commit refreshed data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CORE.csv CORE_by_area.xlsx deadline.xlsx site/data.js
+          git add CORE.csv CORE_by_area.xlsx deadline.xlsx site/data.js site/config.js
           if git diff --cached --quiet; then
             echo "No generated data changes to commit."
           else

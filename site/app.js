@@ -1,5 +1,8 @@
 (function () {
   const data = window.CORE_DEADLINE_DATA || { generated_at: "", sheets: [] };
+  const config = window.CORE_SITE_CONFIG || {};
+  const urgentDays = Number.isFinite(Number(config.urgentDays)) ? Number(config.urgentDays) : 10;
+  const soonDays = Number.isFinite(Number(config.soonDays)) ? Number(config.soonDays) : 30;
   const rankOrder = new Map([
     ["A*", 0],
     ["A", 1],
@@ -18,6 +21,7 @@
     sortSelect: document.getElementById("sortSelect"),
     visibleCount: document.getElementById("visibleCount"),
     urgentCount: document.getElementById("urgentCount"),
+    urgentLabel: document.getElementById("urgentLabel"),
     upcomingCount: document.getElementById("upcomingCount"),
     missingCount: document.getElementById("missingCount"),
     topDeadline: document.getElementById("topDeadline"),
@@ -69,8 +73,8 @@
     const now = new Date();
     const days = Math.floor((deadline.getTime() - now.getTime()) / 86400000);
     if (days < 0) return "overdue";
-    if (days < 10) return "urgent";
-    if (days <= 30) return "soon";
+    if (days < urgentDays) return "urgent";
+    if (days <= soonDays) return "soon";
     return "upcoming";
   }
 
@@ -78,6 +82,15 @@
     const deadline = parseDeadline(value);
     if (!deadline) return null;
     return Math.floor((deadline.getTime() - new Date().getTime()) / 86400000);
+  }
+
+  function deadlineSortKey(value) {
+    const deadline = parseDeadline(value);
+    if (!deadline) return [2, 0];
+
+    const timestamp = deadline.getTime();
+    if (timestamp >= Date.now()) return [0, timestamp];
+    return [1, -timestamp];
   }
 
   function currentSheet() {
@@ -124,12 +137,13 @@
         return rankScore(a) - rankScore(b) || String(a[fields.conference] || "").localeCompare(String(b[fields.conference] || ""));
       }
 
-      const aDate = parseDeadline(a[fields.next]);
-      const bDate = parseDeadline(b[fields.next]);
-      if (!aDate && !bDate) return String(a[fields.conference] || "").localeCompare(String(b[fields.conference] || ""));
-      if (!aDate) return 1;
-      if (!bDate) return -1;
-      return aDate - bDate;
+      const aKey = deadlineSortKey(a[fields.next]);
+      const bKey = deadlineSortKey(b[fields.next]);
+      return (
+        aKey[0] - bKey[0] ||
+        aKey[1] - bKey[1] ||
+        String(a[fields.conference] || "").localeCompare(String(b[fields.conference] || ""))
+      );
     });
     return rows;
   }
@@ -197,6 +211,7 @@
 
     els.visibleCount.textContent = rows.length;
     els.urgentCount.textContent = urgent;
+    els.urgentLabel.textContent = `under ${urgentDays} days`;
     els.upcomingCount.textContent = upcoming;
     els.missingCount.textContent = missing;
     els.topDeadline.textContent = nearest ? nearest[fields.next] : "-";
