@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CORE Conference Deadlines</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">CORE conference tracker</p>
+        <h1>Deadlines by Area</h1>
+      </div>
+      <div class="generated" id="generatedAt">Loading data</div>
+    </header>
+
+    <main>
+      <section class="controls" aria-label="Filters">
+        <label>
+          Area
+          <select id="sheetSelect"></select>
+        </label>
+        <label>
+          Search
+          <input id="searchInput" type="search" placeholder="Conference, acronym, rank, format" />
+        </label>
+        <label>
+          Rank
+          <select id="rankSelect">
+            <option value="">All ranks</option>
+          </select>
+        </label>
+        <label>
+          Deadline
+          <select id="deadlineSelect">
+            <option value="">All rows</option>
+            <option value="upcoming">Upcoming only</option>
+            <option value="missing">Missing deadline</option>
+            <option value="overdue">Overdue</option>
+          </select>
+        </label>
+        <label>
+          Sort
+          <select id="sortSelect">
+            <option value="deadline">Upcoming deadline</option>
+            <option value="rank">CORE rank</option>
+            <option value="name">Conference name</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="stats" aria-label="Summary">
+        <div>
+          <span id="visibleCount">0</span>
+          <p>visible</p>
+        </div>
+        <div>
+          <span id="upcomingCount">0</span>
+          <p>upcoming</p>
+        </div>
+        <div>
+          <span id="missingCount">0</span>
+          <p>missing deadlines</p>
+        </div>
+        <div>
+          <span id="topDeadline">-</span>
+          <p>nearest deadline</p>
+        </div>
+      </section>
+
+      <section class="table-wrap" aria-label="Conference deadline table">
+        <table>
+          <thead>
+            <tr>
+              <th>Conference</th>
+              <th>Acronym</th>
+              <th>Rank</th>
+              <th>Next Deadline</th>
+              <th>Countdown</th>
+              <th>Submission</th>
+              <th>Abstract</th>
+              <th>Pages / Format</th>
+              <th>URL</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
