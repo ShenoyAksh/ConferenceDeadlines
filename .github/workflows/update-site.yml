@@ -149,6 +149,9 @@ jobs:
       - name: Build website config
         run: python build_site_config.py --urgent-days "$URGENT_DAYS" --soon-days "$SOON_DAYS"
 
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
       - name: Commit refreshed data
         run: |
           git config user.name "github-actions[bot]"
@@ -189,6 +192,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
